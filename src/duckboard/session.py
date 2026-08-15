@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import duckdb
+
+from duckboard.catalog import CatalogEntry, FileCatalog
 
 
 class DuckboardSession:
@@ -10,6 +14,15 @@ class DuckboardSession:
 
     def __init__(self) -> None:
         self._conn = duckdb.connect()
+        self.catalog = FileCatalog(self._conn)
+
+    def load(self, name: str, path: str | Path) -> CatalogEntry:
+        """Register a file as a queryable table name."""
+        return self.catalog.load(name, path)
+
+    def execute(self, sql: str) -> duckdb.DuckDBPyRelation:
+        """Run SQL and return the DuckDB relation."""
+        return self._conn.execute(sql)
 
     def close(self) -> None:
         self._conn.close()
