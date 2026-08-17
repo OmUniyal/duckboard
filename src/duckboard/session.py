@@ -24,6 +24,10 @@ class DuckboardSession:
         """Run SQL and return the DuckDB relation."""
         return self._conn.execute(sql)
 
+    def fetch(self, sql: str) -> tuple[list[str], list[tuple]]:
+        rel = self.execute(sql)
+        return rel.columns, rel.fetchall()
+
     def close(self) -> None:
         self._conn.close()
 
