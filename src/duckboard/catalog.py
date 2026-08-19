@@ -92,3 +92,9 @@ class FileCatalog:
             return self._entries[name]
         except KeyError as exc:
             raise CatalogError(f"Table {name!r} is not loaded.") from exc
+
+    def unload(self, name: str) -> None:
+        if name not in self._entries:
+            raise CatalogError(f"No table named '{name}' is loaded.")
+        self._conn.execute(f"DROP VIEW IF EXISTS {name}")
+        del self._entries[name]

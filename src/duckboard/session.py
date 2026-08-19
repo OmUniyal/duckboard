@@ -28,6 +28,21 @@ class DuckboardSession:
         rel = self.execute(sql)
         return rel.columns, rel.fetchall()
 
+    def unload(self, name: str) -> None:
+        self.catalog.unload(name)
+
+    def schema(self, name: str) -> tuple[list[str], list[tuple]]:
+        entry = self.catalog.get(name)  # raises CatalogError if not found
+        rel = self.execute(f"DESCRIBE {entry.name}")
+        rows = rel.fetchall()
+        # DESCRIBE returns: column_name, column_type, null, key, default, extra
+        columns = ["column", "type", "nullable"]
+        data = [
+            (row[0], row[1], str(row[2] == "YES"))
+            for row in rows
+        ]
+        return columns, data
+
     def close(self) -> None:
         self._conn.close()
 

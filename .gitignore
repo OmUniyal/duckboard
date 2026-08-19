@@ -44,3 +44,12 @@ Thumbs.db
 
 # Duckboard local state
 .duckboard/
+
+# Temp / debug artifacts
+debug_*.py
+tmp_*/
+tmp_*
+followers.json
+
+# Mangled test output (from failed Windows path writes)
+Users*/

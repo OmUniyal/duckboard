@@ -39,6 +39,7 @@ def run_repl(session: DuckboardSession) -> None:
     from duckboard.commands import handle_command
 
     buffer: list[str] = []
+    last_result: tuple[list[str], list[tuple]] | None = None
 
     while True:
         prompt = PROMPT_MAIN if not buffer else PROMPT_CONT
@@ -63,7 +64,7 @@ def run_repl(session: DuckboardSession) -> None:
         # Commands (single-line only, no accumulation)
         if _is_command(line):
             try:
-                result = handle_command(line, session)
+                result = handle_command(line, session, last_result)
                 if result:
                     print(result)
             except DuckboardError as e:
@@ -86,6 +87,7 @@ def run_repl(session: DuckboardSession) -> None:
 
         try:
             cols, rows = session.fetch(sql)
+            last_result = (cols, rows)
             print(format_table(cols, rows))
         except DuckboardError as e:
             print(f"Error: {e}")
