@@ -105,4 +105,4 @@ def test_command_dispatches_to_handle_command(capsys):
         patch("duckboard.commands.handle_command", return_value="(no tables loaded)") as mock_cmd,
     ):
         run_repl(session)
-    mock_cmd.assert_called_once_with(":tables", session)
+    mock_cmd.assert_called_once_with(":tables", session, None)
