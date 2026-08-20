@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "duckboard"
-version = "0.0.0"
-description = "File-first local SQL workspace for CSV, Parquet, and JSON — powered by DuckDB."
+version = "0.1.0"
+description = "File-first local SQL workspace for CSV, PSV, Parquet, and JSON — powered by DuckDB."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["duckdb", "sql", "csv", "parquet", "cli", "repl", "analytics"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
