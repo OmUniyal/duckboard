@@ -13,6 +13,7 @@ from duckboard.exceptions import CatalogError
 _NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _CSV_EXTENSIONS = {".csv", ".tsv"}
+_PSV_EXTENSIONS = {".psv"}
 _PARQUET_EXTENSIONS = {".parquet"}
 _JSON_EXTENSIONS = {".json", ".jsonl", ".ndjson"}
 
@@ -23,7 +24,7 @@ class CatalogEntry:
 
     name: str
     path: Path
-    format: str  # "csv", "parquet", or "json"
+    format: str  # "csv", "psv", "parquet", or "json"
 
 
 def _validate_name(name: str) -> None:
@@ -38,13 +39,15 @@ def _detect_format(path: Path) -> str:
     ext = path.suffix.lower()
     if ext in _CSV_EXTENSIONS:
         return "csv"
+    if ext in _PSV_EXTENSIONS:
+        return "psv"
     if ext in _PARQUET_EXTENSIONS:
         return "parquet"
     if ext in _JSON_EXTENSIONS:
         return "json"
     raise CatalogError(
         f"Unsupported file type {ext!r} for {path}. "
-        "Supported: .csv, .tsv, .parquet, .json, .jsonl, .ndjson"
+        "Supported: .csv, .tsv, .psv, .parquet, .json, .jsonl, .ndjson"
     )
 
 
@@ -54,6 +57,8 @@ def _read_function(fmt: str, path: Path) -> str:
     path_literal = str(path.resolve()).replace("\\", "/").replace("'", "''")
     if fmt == "csv":
         return f"read_csv_auto('{path_literal}')"
+    if fmt == "psv":
+        return f"read_csv_auto('{path_literal}', sep='|')"
     if fmt == "parquet":
         return f"read_parquet('{path_literal}')"
     if fmt == "json":

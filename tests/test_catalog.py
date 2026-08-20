@@ -1,5 +1,6 @@
 """Tests for file catalog and session.load()."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -54,3 +55,95 @@ def test_reload_replaces_view() -> None:
 
         count = session.execute("SELECT COUNT(*) FROM sample").fetchone()
         assert count == (4,)
+
+
+# ---------------------------------------------------------------------------
+# Parquet
+# ---------------------------------------------------------------------------
+
+def test_load_parquet_and_query(tmp_path):
+    import duckdb
+    pq = tmp_path / "colors.parquet"
+    conn = duckdb.connect()
+    conn.execute("CREATE TABLE _tmp AS SELECT 'red' AS color, 1 AS n")
+    conn.execute(f"COPY _tmp TO '{str(pq).replace(chr(92), '/')}' (FORMAT PARQUET)")
+    conn.close()
+
+    with DuckboardSession() as session:
+        session.load("colors", pq)
+        cols, rows = session.fetch("SELECT color FROM colors")
+    assert cols == ["color"]
+    assert ("red",) in rows
+
+
+# ---------------------------------------------------------------------------
+# JSON
+# ---------------------------------------------------------------------------
+
+def test_load_json_and_query(tmp_path):
+    jf = tmp_path / "items.json"
+    jf.write_text(json.dumps([{"item": "apple", "qty": 3}, {"item": "banana", "qty": 5}]))
+
+    with DuckboardSession() as session:
+        session.load("items", jf)
+        cols, rows = session.fetch("SELECT item FROM items ORDER BY item")
+    assert "item" in cols
+    assert ("apple",) in rows
+
+
+# ---------------------------------------------------------------------------
+# PSV
+# ---------------------------------------------------------------------------
+
+def test_load_psv_and_query(tmp_path):
+    psv = tmp_path / "data.psv"
+    psv.write_text("color|n\nred|1\nblue|2\n")
+
+    with DuckboardSession() as session:
+        session.load("data", psv)
+        cols, rows = session.fetch("SELECT color FROM data ORDER BY color")
+    assert "color" in cols
+    assert ("blue",) in rows
+
+
+# ---------------------------------------------------------------------------
+# list_tables
+# ---------------------------------------------------------------------------
+
+def test_list_tables_returns_sorted(tmp_path):
+    csv1 = tmp_path / "aaa.csv"
+    csv2 = tmp_path / "zzz.csv"
+    csv1.write_text("x\n1\n")
+    csv2.write_text("x\n2\n")
+
+    with DuckboardSession() as session:
+        session.load("zzz", csv2)
+        session.load("aaa", csv1)
+        entries = session.catalog.list_tables()
+    assert [e.name for e in entries] == ["aaa", "zzz"]
+
+
+def test_list_tables_empty():
+    with DuckboardSession() as session:
+        assert session.catalog.list_tables() == []
+
+
+# ---------------------------------------------------------------------------
+# get
+# ---------------------------------------------------------------------------
+
+def test_get_returns_entry(tmp_path):
+    csv = tmp_path / "sample.csv"
+    csv.write_text("a\n1\n")
+
+    with DuckboardSession() as session:
+        session.load("sample", csv)
+        entry = session.catalog.get("sample")
+    assert entry.name == "sample"
+    assert entry.format == "csv"
+
+
+def test_get_unknown_raises(tmp_path):
+    with DuckboardSession() as session:
+        with pytest.raises(CatalogError):
+            session.catalog.get("ghost")

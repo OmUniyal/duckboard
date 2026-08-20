@@ -22,7 +22,7 @@ class DuckboardSession:
 
     def execute(self, sql: str) -> duckdb.DuckDBPyRelation:
         """Run SQL and return the DuckDB relation."""
-        return self._conn.execute(sql)
+        return self._conn.sql(sql)
 
     def fetch(self, sql: str) -> tuple[list[str], list[tuple]]:
         rel = self.execute(sql)
