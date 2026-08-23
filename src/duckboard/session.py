@@ -16,9 +16,14 @@ class DuckboardSession:
         self._conn = duckdb.connect()
         self.catalog = FileCatalog(self._conn)
 
-    def load(self, name: str, path: str | Path) -> CatalogEntry:
-        """Register a file as a queryable table name."""
-        return self.catalog.load(name, path)
+    def load(
+        self,
+        name: str,
+        path: str | Path,
+        no_header: bool = False,
+        column_names: list[str] | None = None,
+    ) -> CatalogEntry:
+        return self.catalog.load(name, path, no_header=no_header, column_names=column_names)
 
     def execute(self, sql: str) -> duckdb.DuckDBPyRelation:
         """Run SQL and return the DuckDB relation."""
@@ -42,6 +47,22 @@ class DuckboardSession:
             for row in rows
         ]
         return columns, data
+
+    def get_warnings(self, name: str) -> list[str]:
+        """Return heuristic warnings for a loaded table."""
+        return self.catalog.get_warnings(name)
+
+    def get_error_count(self, name: str) -> int:
+        """Return validation error count for a loaded table."""
+        return self.catalog.get_error_count(name)
+
+    def has_errors(self, name: str) -> bool:
+        """Return True if the table has any validation errors."""
+        return self.catalog.has_errors(name)
+
+    def rename_column(self, name: str, old_col: str, new_col: str) -> None:
+        """Rename a column in a loaded table."""
+        self.catalog.rename_column(name, old_col, new_col)
 
     def close(self) -> None:
         self._conn.close()
