@@ -16,6 +16,7 @@ from duckboard.exceptions import CatalogError
 
 def _make_session(load_return=None, schema_return=None, tables_return=None):
     session = MagicMock()
+    session.get_warnings.return_value = []
     if load_return:
         session.load.return_value = load_return
     if schema_return:
@@ -32,6 +33,7 @@ def _mock_entry(name="sample", fmt="csv", path="/data/sample.csv"):
     entry.name = name
     entry.format = fmt
     entry.path = Path(path)
+    entry.error_count = 0
     return entry
 
 
@@ -45,7 +47,7 @@ def test_load_defaults_name_to_stem(tmp_path):
     entry = _mock_entry(name="sales", fmt="csv", path=str(csv))
     session = _make_session(load_return=entry)
     result = handle_command(f":load {csv}", session)
-    session.load.assert_called_once_with("sales", str(csv).replace("\\", "/"))
+    session.load.assert_called_once_with("sales", str(csv).replace("\\", "/"), no_header=False, column_names=None)
     assert "sales" in result
 
 
@@ -55,7 +57,7 @@ def test_load_uses_as_name(tmp_path):
     entry = _mock_entry(name="revenue", fmt="csv", path=str(csv))
     session = _make_session(load_return=entry)
     result = handle_command(f':load "{csv}" as revenue', session)
-    session.load.assert_called_once_with("revenue", str(csv).replace("\\", "/"))
+    session.load.assert_called_once_with("revenue", str(csv).replace("\\", "/"), no_header=False, column_names=None)
     assert "revenue" in result
 
 
