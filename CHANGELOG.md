@@ -3,6 +3,26 @@
 All notable changes to duckboard are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.0] — 2025-08-23
+
+### Added
+- Structural validation on `:load` for CSV/PSV/TSV files — scans first 1,000 rows,
+  flags column count mismatches into `_errors_{name}` table
+- Type anomaly detection — flags rows where a minority of values in a VARCHAR column
+  are numeric (e.g. a number in a gender column)
+- `_errors_{name}` DuckDB table with columns: `row_number`, `raw_line`,
+  `error_type`, `column_name`, `reason`
+- `:load` now shows validation error count and heuristic warnings after load
+- `:tables` shows `[!N]` error indicator for tables with validation errors
+- No-header heuristic — warns if first row of a CSV looks like data, not labels
+- `--no-header` flag on `:load` — prompts for column names or auto-generates col1,
+  col2, col3, …
+- `:rename_column table old_name new_name` — rename a column in a loaded table
+- `:export_errors table "path"` — export malformed rows to CSV/Parquet/JSON
+- `:export_clean table "path"` — export only validated rows to CSV/Parquet/JSON
+- `:clear` / `:cls` — clear the terminal
+- 22 new tests (test_validation.py, test_commands_v2.py); total: 67 passing
+
 ## [0.1.0] - 2026-08-20
 
 ### Added
