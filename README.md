@@ -4,7 +4,7 @@ File-first local SQL workspace for CSV, Parquet, PSV, and JSON — powered by [D
 
 Load files once, query by name with plain SQL, export results. Terminal-native alternative to spinning up a notebook for quick file questions.
 
-> **Status:** v0.2.0 — data quality milestone. Available on [PyPI](https://pypi.org/project/duckboard/).
+> **Status:** v0.2.1 — available on [PyPI](https://pypi.org/project/duckboard/).
 
 ## Install
 
@@ -105,11 +105,17 @@ The `:tables` command shows an error indicator for affected tables:
 - On Windows, use forward slashes in paths: `:load data/sales.csv` not `:load data\sales.csv`.
 - Multi-line SQL is supported — statements execute on semicolon.
 - Validation runs on CSV and PSV files only. Parquet and JSON validation is planned for v0.3.0.
+- `python -m duckboard` works as an alternative launch method if the script entry point is unavailable.
+
+## Read more
+
+[I built a terminal SQL workspace for CSV files — and made it catch bad data automatically](https://dev.to/omuniyal/i-built-a-terminal-sql-workspace-for-csv-files-and-made-it-catch-bad-data-automatically-mpl) — dev.to
 
 ## Project layout
 
 ```
 src/duckboard/
+├── __main__.py     # Enables python -m duckboard
 ├── session.py      # DuckboardSession — owns DuckDB connection + state
 ├── catalog.py      # Registered file → view mappings + validation
 ├── repl.py         # Interactive REPL loop
