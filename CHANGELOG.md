@@ -3,7 +3,21 @@
 All notable changes to duckboard are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## [0.2.0] — 2025-08-23
+## [0.2.1] — 2026-08-25
+
+### Fixed
+- `:save` export rewritten to use Python `csv.writer` for CSV and `json` module
+  for JSON — eliminates row-by-row DuckDB insertion that caused exports to hang
+  on large files (19K rows now exports instantly)
+- Parquet export wrapped in explicit transaction to reduce overhead
+- `Ctrl+C` now interrupts stuck commands and long-running queries gracefully
+  instead of crashing the REPL
+
+### Added
+- `src/duckboard/__main__.py` — enables `python -m duckboard` as an alternative
+  launch method for environments where the script entry point is blocked
+
+## [0.2.0] — 2026-08-23
 
 ### Added
 - Structural validation on `:load` for CSV/PSV/TSV files — scans first 1,000 rows,
@@ -23,7 +37,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `:clear` / `:cls` — clear the terminal
 - 22 new tests (test_validation.py, test_commands_v2.py); total: 67 passing
 
-## [0.1.0] - 2026-08-20
+## [0.1.0] — 2026-08-20
 
 ### Added
 - `DuckboardSession` core engine with DuckDB connection management
@@ -43,12 +57,3 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Windows path normalization throughout (backslash → forward slash)
 - `cli.py` entrypoint with `--version` and `--help`
 - 45 tests passing across catalog, session, formatter, REPL, commands, CLI, and smoke test
-
-## [Unreleased] - v0.2.0
-
-### Planned
-- CSV/PSV/TSV validation on `:load` (column count mismatch detection)
-- No-header detection with `--no-header` flag and column name prompt
-- Malformed row storage in `_errors_{name}` session table
-- `:export_errors <table>` and `:export_clean <table>` commands
-- `:tables` warning indicator for tables with errors
