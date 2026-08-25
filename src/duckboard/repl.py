@@ -48,6 +48,10 @@ def run_repl(session: DuckboardSession) -> None:
         except EOFError:
             print("\nBye.")
             break
+        except KeyboardInterrupt:
+            print("\nInterrupted. Type :quit to exit.")
+            buffer = []
+            continue
 
         line = raw.strip()
 
@@ -67,6 +71,8 @@ def run_repl(session: DuckboardSession) -> None:
                 result = handle_command(line, session, last_result)
                 if result:
                     print(result)
+            except KeyboardInterrupt:
+                print("\nInterrupted.")
             except DuckboardError as e:
                 print(f"Error: {e}")
             except Exception as e:
@@ -89,6 +95,8 @@ def run_repl(session: DuckboardSession) -> None:
             cols, rows = session.fetch(sql)
             last_result = (cols, rows)
             print(format_table(cols, rows))
+        except KeyboardInterrupt:
+            print("\nInterrupted.")
         except DuckboardError as e:
             print(f"Error: {e}")
         except Exception as e:

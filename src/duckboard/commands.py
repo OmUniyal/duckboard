@@ -147,6 +147,7 @@ def _cmd_schema(command: str, session: DuckboardSession) -> str:
 def _cmd_save(
     command: str,
     last_result: tuple[list[str], list[tuple]] | None,
+    input_fn=input,
 ) -> str:
     if last_result is None:
         return "No query result to save. Run a SELECT query first."
@@ -167,31 +168,39 @@ def _cmd_save(
     total = len(rows)
 
     if total >= _LARGE_ROW_WARNING:
-        answer = input(
+        answer = input_fn(
             f"{total:,} rows will be exported. Continue? [Y/N] "
         ).strip().lower()
         if answer != "y":
             return "Export cancelled."
 
+    out = Path(path_str)
     try:
-        import duckdb
-        conn = duckdb.connect()
-        placeholders = ", ".join("?" * len(cols))
-        col_defs = ", ".join(f'"{c}" VARCHAR' for c in cols)
-        conn.execute(f"CREATE TEMP TABLE _save_buf ({col_defs})")
-        conn.executemany(
-            f"INSERT INTO _save_buf VALUES ({placeholders})", rows
-        )
-        out = Path(path_str)
-        out_str = str(out).replace("\\", "/")
         if fmt == "csv":
-            conn.execute(f"COPY _save_buf TO '{out_str}' (FORMAT CSV, HEADER)")
-        elif fmt == "parquet":
-            conn.execute(f"COPY _save_buf TO '{out_str}' (FORMAT PARQUET)")
+            with out.open("w", newline="", encoding="utf-8") as f:
+                writer = _csv.writer(f)
+                writer.writerow(cols)
+                writer.writerows(rows)
         elif fmt == "json":
-            conn.execute(f"COPY _save_buf TO '{out_str}' (FORMAT JSON)")
-        conn.close()
+            import json
+            with out.open("w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(dict(zip(cols, (None if v == "NULL" else v for v in row))), default=str) + "\n")
+        elif fmt == "parquet":
+            import duckdb
+            conn = duckdb.connect()
+            col_defs = ", ".join(f'"{c}" VARCHAR' for c in cols)
+            placeholders = ", ".join("?" * len(cols))
+            conn.execute(f"CREATE TEMP TABLE _save_buf ({col_defs})")
+            conn.execute("BEGIN TRANSACTION")
+            conn.executemany(f"INSERT INTO _save_buf VALUES ({placeholders})", rows)
+            conn.execute("COMMIT")
+            out_str = str(out).replace("\\", "/")
+            conn.execute(f"COPY _save_buf TO '{out_str}' (FORMAT PARQUET)")
+            conn.close()
         return f"Saved {total:,} {'row' if total == 1 else 'rows'} to {out}"
+    except KeyboardInterrupt:
+        return "Export cancelled."
     except Exception as e:
         return f"Error saving file: {e}"
 
@@ -352,7 +361,7 @@ def handle_command(
     if verb == ":schema":
         return _cmd_schema(command, session)
     if verb == ":save":
-        return _cmd_save(command, last_result)
+        return _cmd_save(command, last_result, input_fn=input_fn)
     if verb == ":unload":
         return _cmd_unload(command, session)
     if verb == ":pwd":
