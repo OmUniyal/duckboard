@@ -3,6 +3,39 @@
 All notable changes to duckboard are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] — 2026-08-28
+
+### Added
+- Wide-table display: columns auto-truncate with `…` to fit terminal width;
+  proportional greedy budget algorithm with a floor of 4 chars per column
+- Vertical output mode — two trigger mechanisms:
+  - `\G` suffix immediately before `;` (e.g. `SELECT * FROM t\G;`)
+  - Oracle-style hint `/*+ vertical_result(N) */` anywhere in the query,
+    where N sets the display row cap independently of the query result set
+- Tab autocomplete via `pyreadline3` (Windows) / `readline` (Linux/macOS):
+  command names, table names after `:schema`/`:unload`/etc., file paths
+  after `:load`, SQL keywords as fallback — degrades silently if unavailable
+- `:unload all` — unload every loaded table in one command; reports count
+  and lists any per-table failures without aborting the rest
+- `:schema` now appends a Warnings section when load warnings exist
+- Four-state `:load` output: clean / known errors only / DuckDB residual
+  drops only / both — with actionable next-step hints per state
+- `:tables` status column extended: `[!N]` known errors, `[!?]` residual
+  drops only, `[!N +?]` both
+
+### Changed
+- CSV/PSV/TSV structural validation now scans the **full file** — the previous
+  1,000-row cap meant errors beyond row 1,000 were silently ignored;
+  `_errors_{name}` is now a complete record of all malformed rows
+- Residual row-count cross-check added to every `:load`: compares raw line
+  count against DuckDB-loaded count; any shortfall beyond known errors is
+  stored as a warning with exact numbers (raw / loaded / known) for diagnosis
+
+### Tests
+- 105 passing (up from 67 in v0.2.1)
+- New: `test_formatter_v3.py` (13), `test_completer.py` (11),
+  `test_silent_errors.py` (7), additions to `test_commands_v2.py` (7)
+
 ## [0.2.1] — 2026-08-25
 
 ### Fixed
