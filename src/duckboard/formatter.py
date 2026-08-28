@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import shutil
+
 
 def format_table(
     columns: list[str],
     rows: list[tuple],
     max_rows: int = 50,
+    vertical: bool = False,
+    terminal_width: int | None = None,
 ) -> str:
     def _cell(val: object) -> str:
         return "NULL" if val is None else str(val)
@@ -21,12 +25,68 @@ def format_table(
     rendered: list[list[str]] = [[_cell(v) for v in row] for row in rows]
     total = len(rows)
     display_rows = rendered[:max_rows]
+    n_cols = len(columns)
 
-    col_widths = [
+    def _footer() -> str:
+        if total == 0:
+            return "(0 rows)"
+        if total > max_rows:
+            return f"(showing {max_rows} of {total} rows)"
+        return f"({total} {'row' if total == 1 else 'rows'})"
+
+    # ── Vertical mode ─────────────────────────────────────────────────────────
+    if vertical:
+        if total == 0:
+            return "(0 rows)"
+        label_w = max(len(c) for c in columns)
+        stars = "*" * 27
+        parts: list[str] = []
+        for i, row in enumerate(display_rows, 1):
+            parts.append(f"{stars} {i}. row {stars}")
+            for col, cell in zip(columns, row):
+                parts.append(f"{col.rjust(label_w)}: {cell}")
+            parts.append("")  # blank line between rows
+        if parts and parts[-1] == "":
+            parts.pop()
+        parts.append("")
+        parts.append(_footer())
+        return "\n".join(parts)
+
+    # ── Horizontal mode ───────────────────────────────────────────────────────
+    numeric = [_is_numeric_col(i) for i in range(n_cols)]
+
+    natural_widths = [
         max(len(col), *(len(r[i]) for r in rendered) if rendered else (len(col),))
         for i, col in enumerate(columns)
     ]
-    numeric = [_is_numeric_col(i) for i in range(len(columns))]
+
+    tw = (
+        terminal_width
+        if terminal_width is not None
+        else shutil.get_terminal_size(fallback=(80, 24)).columns
+    )
+    total_needed = sum(natural_widths) + 3 * n_cols + 1
+    col_widths = natural_widths[:]
+
+    if total_needed > tw:
+        budget = tw - (3 * n_cols + 1)
+        if budget < 4 * n_cols:
+            # Terminal too narrow for even minimal columns — fall back to vertical
+            warn = "(terminal too narrow — switching to vertical mode)"
+            return warn + "\n" + format_table(
+                columns, rows, max_rows=max_rows, vertical=True, terminal_width=terminal_width
+            )
+        # Greedy proportional assignment, floor 4 per column
+        order = sorted(range(n_cols), key=lambda i: natural_widths[i], reverse=True)
+        remaining = budget
+        for rank, idx in enumerate(order):
+            remaining_count = n_cols - rank
+            w = max(4, min(natural_widths[idx], remaining // remaining_count))
+            col_widths[idx] = w
+            remaining -= w
+
+    def _truncate(text: str, width: int) -> str:
+        return text if len(text) <= width else text[: width - 1] + "…"
 
     def _pad(text: str, width: int, right_align: bool) -> str:
         return text.rjust(width) if right_align else text.ljust(width)
@@ -36,25 +96,17 @@ def format_table(
     bottom = "└" + "┴".join("─" * (w + 2) for w in col_widths) + "┘"
 
     header = "│" + "│".join(
-        f" {_pad(col, col_widths[i], numeric[i])} "
+        f" {_pad(_truncate(col, col_widths[i]), col_widths[i], numeric[i])} "
         for i, col in enumerate(columns)
     ) + "│"
 
     data_lines = [
         "│" + "│".join(
-            f" {_pad(row[i], col_widths[i], numeric[i])} "
-            for i in range(len(columns))
+            f" {_pad(_truncate(row[i], col_widths[i]), col_widths[i], numeric[i])} "
+            for i in range(n_cols)
         ) + "│"
         for row in display_rows
     ]
 
-    lines = [top, header, sep, *data_lines, bottom]
-
-    if total == 0:
-        lines.append("(0 rows)")
-    elif total > max_rows:
-        lines.append(f"(showing {max_rows} of {total} rows)")
-    else:
-        lines.append(f"({total} {'row' if total == 1 else 'rows'})")
-
+    lines = [top, header, sep, *data_lines, bottom, _footer()]
     return "\n".join(lines)
