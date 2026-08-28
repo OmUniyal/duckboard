@@ -126,6 +126,7 @@ class FileCatalog:
 
         entry = CatalogEntry(name=name, path=resolved, format=fmt, error_count=error_count)
         self._entries[name] = entry
+        self._run_row_count_crosscheck(name, resolved, fmt, error_count)
         return entry
 
     def list_tables(self) -> list[CatalogEntry]:
@@ -187,8 +188,6 @@ class FileCatalog:
                 expected = len(header)
 
                 for i, row in enumerate(reader, start=2):
-                    if i > 1000:
-                        break
                     if len(row) != expected:
                         raw = sep.join(row)
                         reason = (
@@ -264,6 +263,56 @@ class FileCatalog:
             total += len(rows)
 
         return total
+
+    def _run_row_count_crosscheck(
+        self,
+        name: str,
+        path: Path,
+        fmt: str,
+        error_count: int,
+    ) -> None:
+        """Compare raw file row count against DuckDB-loaded count.
+
+        Any shortfall beyond what Python validation already caught is stored
+        as a warning with exact numbers so the root cause can be diagnosed.
+        """
+        try:
+            loaded_count: int = self._conn.execute(
+                f"SELECT COUNT(*) FROM {name}"
+            ).fetchone()[0]
+        except Exception:
+            return
+
+        raw_count: int | None = None
+
+        if fmt in ("csv", "psv"):
+            try:
+                with path.open("rb") as fh:
+                    raw_count = sum(1 for _ in fh) - 1  # subtract header line
+            except Exception:
+                return
+        else:
+            reader_fn = "read_parquet" if fmt == "parquet" else "read_json_auto"
+            path_literal = str(path.resolve()).replace("\\", "/").replace("'", "''")
+            try:
+                raw_count = self._conn.execute(
+                    f"SELECT COUNT(*) FROM {reader_fn}('{path_literal}')"
+                ).fetchone()[0]
+            except Exception:
+                return  # DuckDB itself threw — can't determine raw count
+
+        if raw_count is None:
+            return
+
+        residual = max(0, raw_count - loaded_count - error_count)
+        if residual > 0:
+            self._warnings[name].append(
+                f"{residual} row(s) were dropped by DuckDB but not captured in "
+                f"the error table (cause unknown — may be encoding, embedded "
+                f"nulls, or a DuckDB type coercion issue). "
+                f"Raw line count: {raw_count}, loaded: {loaded_count}, "
+                f"known errors: {error_count}."
+            )
 
     # ------------------------------------------------------------------
     # Public accessors
