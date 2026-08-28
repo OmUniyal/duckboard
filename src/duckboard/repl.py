@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 
 from duckboard.exceptions import DuckboardError
@@ -13,13 +14,10 @@ EXIT_TRIGGERS = frozenset({":quit", ":q", "exit", "quit"})
 PROMPT_MAIN = "duckboard> "
 PROMPT_CONT = "        -> "
 
-try:
-    if sys.platform == "win32":
-        import pyreadline3  # noqa: F401
-    else:
-        import readline  # noqa: F401
-except ImportError:
-    pass
+_HINT_RE = re.compile(
+    r"/\*\+\s*vertical_result\s*\(\s*(\d+)\s*\)\s*\*/",
+    re.IGNORECASE,
+)
 
 
 def _read_input(prompt: str) -> str:
@@ -38,6 +36,23 @@ def _is_exit(line: str) -> bool:
 def run_repl(session: DuckboardSession) -> None:
     from duckboard.commands import handle_command
 
+    try:
+        if sys.platform == "win32":
+            import pyreadline3 as _rl  # type: ignore[import]
+        else:
+            import readline as _rl  # type: ignore[import]
+        from duckboard.completer import DuckboardCompleter
+
+        _completer = DuckboardCompleter(session)
+        _rl.set_completer(_completer.complete)
+        _rl.set_completer_delims(" \t")
+        if getattr(_rl, "__doc__", None) and "libedit" in _rl.__doc__:
+            _rl.parse_and_bind("bind ^I rl_complete")  # macOS libedit
+        else:
+            _rl.parse_and_bind("tab: complete")
+    except (ImportError, AttributeError):
+        pass  # readline / pyreadline3 not installed — silent
+
     buffer: list[str] = []
     last_result: tuple[list[str], list[tuple]] | None = None
 
@@ -55,17 +70,14 @@ def run_repl(session: DuckboardSession) -> None:
 
         line = raw.strip()
 
-        # Empty line — reset buffer, back to fresh prompt
         if not line:
             buffer = []
             continue
 
-        # Exit triggers (single-line only)
         if _is_exit(line):
             print("Bye.")
             break
 
-        # Commands (single-line only, no accumulation)
         if _is_command(line):
             try:
                 result = handle_command(line, session, last_result)
@@ -80,21 +92,35 @@ def run_repl(session: DuckboardSession) -> None:
             buffer = []
             continue
 
-        # SQL accumulation
         buffer.append(raw)
 
         joined = " ".join(b.strip() for b in buffer)
         if not joined.rstrip().endswith(";"):
             continue
 
-        # Semicolon seen — execute
-        sql = joined.rstrip().rstrip(";").strip()
+        # Semicolon seen — parse vertical triggers, then execute
+        raw_sql = joined.rstrip()
+        vertical = False
+        vert_max_rows = 50
+
+        if raw_sql.endswith("\\G;"):
+            vertical = True
+            raw_sql = raw_sql[:-3] + ";"
+
+        sql = raw_sql.rstrip(";").strip()
+
+        hint_match = _HINT_RE.search(sql)
+        if hint_match:
+            vertical = True
+            vert_max_rows = int(hint_match.group(1))
+            sql = _HINT_RE.sub("", sql).strip()
+
         buffer = []
 
         try:
             cols, rows = session.fetch(sql)
             last_result = (cols, rows)
-            print(format_table(cols, rows))
+            print(format_table(cols, rows, max_rows=vert_max_rows, vertical=vertical))
         except KeyboardInterrupt:
             print("\nInterrupted.")
         except DuckboardError as e:
