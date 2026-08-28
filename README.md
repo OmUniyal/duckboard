@@ -4,7 +4,7 @@ File-first local SQL workspace for CSV, Parquet, PSV, and JSON — powered by [D
 
 Load files once, query by name with plain SQL, export results. Terminal-native alternative to spinning up a notebook for quick file questions.
 
-> **Status:** v0.2.1 — available on [PyPI](https://pypi.org/project/duckboard/).
+> **Status:** v0.3.0 — available on [PyPI](https://pypi.org/project/duckboard/).
 
 ## Install
 
@@ -60,9 +60,10 @@ Bye.
 |---------|-------------|
 | `:load "path" [as name] [--no-header]` | Load a file as a queryable table. Name defaults to filename stem. Use `--no-header` if the file has no header row — duckboard will prompt for column names or auto-generate them. |
 | `:tables` | List all loaded tables with format, path, and validation status. |
-| `:schema <table>` | Show column names, types, and nullability for a table. |
+| `:schema <table>` | Show column names, types, and nullability. Includes load warnings when present. |
 | `:save "path" [--csv\|--parquet\|--json]` | Save last query result to a file. Format auto-detected from extension; use flag to override. |
 | `:unload <table>` | Remove a loaded table from the session. |
+| `:unload all` | Remove every loaded table in one shot. |
 | `:rename_column table old_name new_name` | Rename a column in a loaded table. |
 | `:export_errors table "path" [--csv\|--parquet\|--json]` | Export rows that failed validation to a file. |
 | `:export_clean table "path" [--csv\|--parquet\|--json]` | Export only validated rows to a file. |
@@ -70,33 +71,90 @@ Bye.
 | `:clear` / `:cls` | Clear the terminal. |
 | `:quit` / `:q` / `exit` / `quit` / `Ctrl+D` | Exit duckboard. |
 
+## Vertical output
+
+Wide results can be viewed one row at a time using vertical mode. Two ways to trigger it:
+
+**`\G` suffix** — append immediately before the semicolon:
+```
+duckboard> SELECT * FROM orders WHERE id = 1\G;
+*************************** 1. row ***************************
+        id: 1
+  customer: Alice
+   revenue: 12345.67
+
+(1 row)
+```
+
+**Oracle-style hint** — inline, with a custom display row cap:
+```sql
+SELECT /*+ vertical_result(5) */ * FROM orders;
+```
+This shows up to 5 rows vertically. The full result set is still held in memory for `:save`.
+
+## Tab autocomplete
+
+duckboard supports tab completion (requires `pyreadline3` on Windows, built-in `readline` on Linux/macOS):
+
+- **Command names** — type `:s` and press Tab to expand to `:schema`, `:save`, etc.
+- **Table names** — after `:schema`, `:unload`, `:export_errors`, and similar commands
+- **File paths** — after `:load`
+- **SQL keywords** — `SEL` → `SELECT`, `FR` → `FROM`, etc.
+
+Install the readline extra on Windows:
+```powershell
+pip install duckboard[readline]
+```
+
 ## Data quality
 
-When a CSV or PSV file is loaded, duckboard automatically validates the first 1,000 rows and reports two types of issues:
+When a file is loaded, duckboard validates it and reports issues automatically.
 
-**Structural errors** — rows whose field count doesn't match the header:
+**Full-file structural validation** (CSV/PSV/TSV): scans every row, flags column count mismatches into `_errors_{name}`. No row limit — a bad row at position 15,000 is caught just like one at position 5.
+
+**Type anomaly detection**: flags rows where a numeric value appears in a predominantly string column (e.g. a number in a `gender` column).
+
+**Residual row-count cross-check**: after loading, duckboard compares the raw line count against what DuckDB actually loaded. Any shortfall beyond known errors is surfaced as a warning with exact counts so the root cause can be tracked down.
+
+`:load` output reflects what was found:
+
 ```
-duckboard> :load "sales.csv" as sales
-Loaded 'sales' from sales.csv  (csv)
-  1 validation error(s) found. Run 'SELECT * FROM _errors_sales' to inspect.
+# Clean
+Loaded 'orders' from orders.csv  (csv)
+
+# Known validation errors
+Loaded 'orders' from orders.csv  (csv)
+  2 validation error(s) found.
+  → :export_errors orders  to inspect  |  :export_clean orders  for clean rows
+
+# DuckDB dropped rows silently (cause unknown)
+Loaded 'orders' from orders.csv  (csv)
+  2 row(s) were dropped by DuckDB but not captured in the error table
+  (cause unknown — may be encoding, embedded nulls, or a DuckDB type coercion issue).
+  Raw line count: 20000, loaded: 19998, known errors: 0.
 ```
 
-**Type anomalies** — rows where a numeric value appears in a predominantly string column (e.g. a number in a `gender` column).
-
-All errors are stored in `_errors_{name}` for the duration of the session:
+All known errors are stored in `_errors_{name}` for the duration of the session:
 ```sql
-SELECT * FROM _errors_sales;
+SELECT * FROM _errors_orders;
 ```
 
-The `:tables` command shows an error indicator for affected tables:
+The `:tables` command shows status for every loaded table:
+
 ```
-┌────────┬────────┬───────────┬────────┐
-│ name   │ format │ path      │ errors │
-├────────┼────────┼───────────┼────────┤
-│ sales  │ csv    │ sales.csv │ [!1]   │
-│ orders │ csv    │ orders.csv│ ok     │
-└────────┴────────┴───────────┴────────┘
+┌────────┬────────┬────────────┬────────────┐
+│ name   │ format │ path       │ errors     │
+├────────┼────────┼────────────┼────────────┤
+│ orders │ csv    │ orders.csv │ [!2]       │
+│ events │ parquet│ events.prq │ [!?]       │
+│ mixed  │ csv    │ mixed.csv  │ [!2 +?]    │
+│ sample │ csv    │ sample.csv │ ok         │
+└────────┴────────┴────────────┴────────────┘
 ```
+
+`[!N]` — N known errors in the error table, exportable via `:export_errors`.
+`[!?]` — rows dropped by DuckDB, not in error table, cause TBD.
+`[!N +?]` — both.
 
 ## Notes
 
@@ -104,7 +162,7 @@ The `:tables` command shows an error indicator for affected tables:
 - Large exports (2,000+ rows) prompt for confirmation before writing.
 - On Windows, use forward slashes in paths: `:load data/sales.csv` not `:load data\sales.csv`.
 - Multi-line SQL is supported — statements execute on semicolon.
-- Validation runs on CSV and PSV files only. Parquet and JSON validation is planned for v0.3.0.
+- Validation runs on CSV and PSV files only. Parquet and JSON validation is planned for v0.4.0.
 - `python -m duckboard` works as an alternative launch method if the script entry point is unavailable.
 
 ## Read more
@@ -117,10 +175,11 @@ The `:tables` command shows an error indicator for affected tables:
 src/duckboard/
 ├── __main__.py     # Enables python -m duckboard
 ├── session.py      # DuckboardSession — owns DuckDB connection + state
-├── catalog.py      # Registered file → view mappings + validation
-├── repl.py         # Interactive REPL loop
+├── catalog.py      # Registered file → view mappings, validation, cross-check
+├── repl.py         # Interactive REPL loop with \G and hint intercept
 ├── commands.py     # All REPL commands
-├── formatter.py    # Box-drawing table output for query results
+├── formatter.py    # Box-drawing output, truncation, and vertical mode
+├── completer.py    # Tab autocomplete for commands, tables, paths, SQL keywords
 ├── cli.py          # CLI entry point
 └── exceptions.py   # DuckboardError hierarchy
 ```
