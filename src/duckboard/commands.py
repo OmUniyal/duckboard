@@ -106,13 +106,33 @@ def _cmd_load(command: str, session: DuckboardSession, input_fn=input) -> str:
         return f"Error: {e}"
 
     lines = [f"Loaded '{entry.name}' from {entry.path}  ({entry.format})"]
-    for w in session.get_warnings(name):
-        lines.append(w)
-    if entry.error_count > 0:
+
+    warnings = session.get_warnings(name)
+    residual_warns = [w for w in warnings if "dropped by DuckDB" in w]
+    other_warns    = [w for w in warnings if "dropped by DuckDB" not in w]
+
+    for w in other_warns:
+        lines.append(f"  {w}")
+
+    has_errors   = entry.error_count > 0
+    has_residual = bool(residual_warns)
+
+    if has_errors and has_residual:
         lines.append(
-            f"  {entry.error_count} validation error(s) found. "
-            f"Run 'SELECT * FROM _errors_{name}' to inspect."
+            f"  {entry.error_count} error(s) found, plus rows dropped by DuckDB (cause unknown)."
         )
+        lines.append(f"  → :export_errors {name}  to inspect known errors")
+    elif has_errors:
+        lines.append(f"  {entry.error_count} validation error(s) found.")
+        lines.append(
+            f"  → :export_errors {name}  to inspect"
+            f"  |  :export_clean {name}  for clean rows"
+        )
+    elif has_residual:
+        for w in residual_warns:
+            lines.append(f"  {w}")
+        lines.append(f"  → :export_errors {name}  for any captured errors")
+
     return "\n".join(lines)
 
 
@@ -120,15 +140,19 @@ def _cmd_tables(session: DuckboardSession) -> str:
     entries = session.catalog.list_tables()
     if not entries:
         return "(no tables loaded)"
-    rows = [
-        (
-            e.name,
-            e.format,
-            str(e.path),
-            f"[!{e.error_count}]" if e.error_count > 0 else "ok",
-        )
-        for e in entries
-    ]
+    rows = []
+    for e in entries:
+        warns = session.get_warnings(e.name)
+        has_residual = any("dropped by DuckDB" in w for w in warns)
+        if e.error_count > 0 and has_residual:
+            status = f"[!{e.error_count} +?]"
+        elif e.error_count > 0:
+            status = f"[!{e.error_count}]"
+        elif has_residual:
+            status = "[!?]"
+        else:
+            status = "ok"
+        rows.append((e.name, e.format, str(e.path), status))
     return format_table(["name", "format", "path", "errors"], rows)
 
 
@@ -139,7 +163,11 @@ def _cmd_schema(command: str, session: DuckboardSession) -> str:
     name = parts[1]
     try:
         columns, rows = session.schema(name)
-        return format_table(columns, rows)
+        result = format_table(columns, rows)
+        warnings = session.get_warnings(name)
+        if warnings:
+            result += "\n\nWarnings:\n" + "\n".join(f"  {w}" for w in warnings)
+        return result
     except CatalogError as e:
         return f"Error: {e}"
 
@@ -208,8 +236,24 @@ def _cmd_save(
 def _cmd_unload(command: str, session: DuckboardSession) -> str:
     parts = command.split()
     if len(parts) != 2:
-        return "Usage: :unload <table>"
+        return "Usage: :unload <table>  |  :unload all"
     name = parts[1]
+
+    if name.lower() == "all":
+        entries = session.catalog.list_tables()
+        if not entries:
+            return "(no tables loaded)"
+        unloaded, failed = [], []
+        for e in entries:
+            try:
+                session.unload(e.name)
+                unloaded.append(e.name)
+            except CatalogError as ex:
+                failed.append(f"{e.name}: {ex}")
+        lines = [f"Unloaded {len(unloaded)} table(s): {', '.join(unloaded)}."]
+        lines.extend(failed)
+        return "\n".join(lines)
+
     try:
         session.unload(name)
         return f"Unloaded '{name}'."

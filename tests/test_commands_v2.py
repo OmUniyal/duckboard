@@ -124,3 +124,93 @@ def test_cls_alias():
         result = handle_command(":cls", session)
         mock_sys.assert_called_once()
         assert result == ""
+
+
+# ── :unload all ───────────────────────────────────────────────────────────────
+
+def test_unload_all_removes_all_tables():
+    session = MagicMock()
+    entry_a = MagicMock(); entry_a.name = "alpha"
+    entry_b = MagicMock(); entry_b.name = "beta"
+    session.catalog.list_tables.return_value = [entry_a, entry_b]
+
+    result = handle_command(":unload all", session, None)
+
+    assert session.unload.call_count == 2
+    assert "alpha" in result and "beta" in result
+    assert "2 table(s)" in result
+
+
+def test_unload_all_empty_catalog():
+    session = MagicMock()
+    session.catalog.list_tables.return_value = []
+
+    result = handle_command(":unload all", session, None)
+
+    assert result == "(no tables loaded)"
+    session.unload.assert_not_called()
+
+
+def test_unload_all_partial_failure():
+    session = MagicMock()
+    entry_a = MagicMock(); entry_a.name = "alpha"
+    entry_b = MagicMock(); entry_b.name = "beta"
+    session.catalog.list_tables.return_value = [entry_a, entry_b]
+
+    from duckboard.exceptions import CatalogError
+    def unload_side_effect(name):
+        if name == "beta":
+            raise CatalogError("view locked")
+    session.unload.side_effect = unload_side_effect
+
+    result = handle_command(":unload all", session, None)
+
+    assert "alpha" in result
+    assert "beta" in result
+    assert "view locked" in result
+
+
+# ── :tables status column ─────────────────────────────────────────────────────
+
+def test_tables_status_ok():
+    session = MagicMock()
+    entry = MagicMock(); entry.name = "t"; entry.format = "csv"
+    entry.path = "/tmp/t.csv"; entry.error_count = 0
+    session.catalog.list_tables.return_value = [entry]
+    session.get_warnings.return_value = []
+
+    result = handle_command(":tables", session, None)
+    assert "ok" in result
+
+
+def test_tables_status_known_errors():
+    session = MagicMock()
+    entry = MagicMock(); entry.name = "t"; entry.format = "csv"
+    entry.path = "/tmp/t.csv"; entry.error_count = 3
+    session.catalog.list_tables.return_value = [entry]
+    session.get_warnings.return_value = []
+
+    result = handle_command(":tables", session, None)
+    assert "[!3]" in result
+
+
+def test_tables_status_residual_only():
+    session = MagicMock()
+    entry = MagicMock(); entry.name = "t"; entry.format = "csv"
+    entry.path = "/tmp/t.csv"; entry.error_count = 0
+    session.catalog.list_tables.return_value = [entry]
+    session.get_warnings.return_value = ["2 row(s) were dropped by DuckDB but not captured"]
+
+    result = handle_command(":tables", session, None)
+    assert "[!?]" in result
+
+
+def test_tables_status_combined():
+    session = MagicMock()
+    entry = MagicMock(); entry.name = "t"; entry.format = "csv"
+    entry.path = "/tmp/t.csv"; entry.error_count = 2
+    session.catalog.list_tables.return_value = [entry]
+    session.get_warnings.return_value = ["1 row(s) were dropped by DuckDB but not captured"]
+
+    result = handle_command(":tables", session, None)
+    assert "[!2 +?]" in result
