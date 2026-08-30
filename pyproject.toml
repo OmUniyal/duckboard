@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "duckboard"
-version = "0.3.0"
+version = "0.3.1"
 description = "File-first local SQL workspace for CSV, PSV, Parquet, and JSON — powered by DuckDB."
 readme = "README.md"
 requires-python = ">=3.10"

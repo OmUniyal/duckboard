@@ -3,7 +3,7 @@
 from duckboard.exceptions import DuckboardError
 from duckboard.session import DuckboardSession
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 __all__ = [
     "DuckboardSession",
