@@ -5,6 +5,9 @@ from __future__ import annotations
 import glob
 import os
 
+from collections.abc import Callable
+from pathlib import Path
+
 from duckboard.session import DuckboardSession
 
 try:
@@ -51,22 +54,46 @@ SQL_KEYWORDS: list[str] = [
     "SUM", "THEN", "UPDATE", "WHEN", "WHERE", "WITH",
 ]
 
+_SQL_TABLE_TRIGGERS: frozenset[str] = frozenset({
+    "FROM", "JOIN", "INTO", "UPDATE", "TABLE",
+    "LEFT", "INNER", "OUTER", "CROSS", "FULL",
+})
+
 
 class DuckboardCompleter:
-    def __init__(self, session: DuckboardSession) -> None:
+    def __init__(
+        self,
+        session: DuckboardSession,
+        get_line_buffer: Callable[[], str] | None = None,
+    ) -> None:
         self._session = session
+        self._get_line_buffer = get_line_buffer
         self._matches: list[str] = []
 
     def complete(self, text: str, state: int) -> str | None:
         if state == 0:
-            self._matches = self._compute_matches(text)
-        try:
-            return self._matches[state]
-        except IndexError:
-            return None
+            matches = self._compute_matches(text)
+            if len(matches) == 1:
+                # Unique match — complete it fully
+                self._matches = matches
+            elif len(matches) > 1:
+                # Multiple matches — complete to common prefix only
+                # This prevents pyreadline3 from flooding the console
+                prefix = os.path.commonprefix(matches)
+                self._matches = [prefix] if len(prefix) > len(text) else []
+            else:
+                self._matches = []
+        if state == 0:
+            return self._matches[0] if self._matches else None
+        return None
 
     def _compute_matches(self, text: str) -> list[str]:
-        line = readline.get_line_buffer() if readline is not None else text
+        if self._get_line_buffer is not None:
+            line = self._get_line_buffer()
+        elif readline is not None and hasattr(readline, "get_line_buffer"):
+            line = readline.get_line_buffer()
+        else:
+            line = text
         tokens = line.split()
 
         # ── Completing the first token (command name) ────────────────────────
@@ -97,21 +124,38 @@ class DuckboardCompleter:
         ):
             return self._path_matches(text)
 
-        # ── SQL keyword fallback ─────────────────────────────────────────────
+        # ── SQL keyword / table name fallback ─────────────────────────────────
         if not first_is_command:
+            # Offer table names after FROM, JOIN, etc.
+            prev_token = ""
+            if line.endswith(" ") and tokens:
+                prev_token = tokens[-1].upper()
+            elif len(tokens) >= 2:
+                prev_token = tokens[-2].upper()
+
+            if prev_token in _SQL_TABLE_TRIGGERS:
+                table_names = [e.name for e in self._session.catalog.list_tables()]
+                return [t for t in table_names if t.startswith(text)]
+
             upper = text.upper()
             return [kw for kw in SQL_KEYWORDS if kw.startswith(upper)]
 
         return []
 
-    @staticmethod
-    def _path_matches(text: str) -> list[str]:
-        raw = text.strip("\"'")
-        matches = glob.glob(raw + "*")
+    _LOAD_EXTENSIONS = frozenset({
+        ".csv", ".tsv", ".psv", ".parquet", ".json", ".jsonl", ".ndjson"
+    })
+
+    def _path_matches(self, text: str) -> list[str]:
+        leading_quote = text[0] if text and text[0] in ('"', "'") else ""
+        raw = text.strip("\"'").replace("\\", "/")
         results: list[str] = []
-        for m in matches:
+        for m in sorted(glob.glob(raw + "*")):
             display = m.replace(os.sep, "/")
             if os.path.isdir(m):
-                display += "/"
-            results.append(display)
+                results.append(leading_quote + display + "/")
+            elif Path(m).suffix.lower() in self._LOAD_EXTENSIONS:
+                results.append(leading_quote + display)
+            if len(results) >= 8:
+                break
         return results

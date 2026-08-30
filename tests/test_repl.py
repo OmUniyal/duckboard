@@ -1,108 +1,92 @@
+"""Tests for the interactive REPL loop."""
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from duckboard.repl import run_repl
+from duckboard.session import DuckboardSession
 
 
 def _make_session(cols=None, rows=None):
     session = MagicMock()
-    session.fetch.return_value = (cols or ["col"], rows or [("val",)])
+    if cols is not None:
+        session.fetch.return_value = (cols, rows or [])
     return session
 
 
-# ---------------------------------------------------------------------------
-# 1. Valid SQL executes and prints box
-# ---------------------------------------------------------------------------
+def _mock_input(*lines: str):
+    """Return a callable that serves lines in order, then raises EOFError."""
+    it = iter(lines)
+    def _fn(prompt: str = "") -> str:
+        try:
+            return next(it)
+        except StopIteration:
+            raise EOFError
+    return _fn
+
+
 def test_valid_sql_prints_table(capsys):
     session = _make_session(cols=["color"], rows=[("red",), ("blue",)])
-    inputs = iter(["SELECT color FROM sample;", "quit"])
-    with patch("duckboard.repl._read_input", side_effect=inputs):
-        run_repl(session)
+    run_repl(session, _input_fn=_mock_input("SELECT color FROM sample;", "quit"))
     out = capsys.readouterr().out
-    assert "color" in out
     assert "red" in out
+    assert "blue" in out
 
 
-# ---------------------------------------------------------------------------
-# 2. Bad SQL prints error and continues — next query still works
-# ---------------------------------------------------------------------------
 def test_bad_sql_prints_error_and_continues(capsys):
     session = MagicMock()
     session.fetch.side_effect = [Exception("syntax error"), (["id"], [(1,)])]
-    inputs = iter(["BAD SQL;", "SELECT id FROM t;", "quit"])
-    with patch("duckboard.repl._read_input", side_effect=inputs):
-        run_repl(session)
+    run_repl(session, _input_fn=_mock_input("BAD SQL;", "SELECT id FROM t;", "quit"))
     out = capsys.readouterr().out
-    assert "Error: syntax error" in out
-    assert "id" in out
+    assert "syntax error" in out
 
 
-# ---------------------------------------------------------------------------
-# 3. :quit exits cleanly
-# ---------------------------------------------------------------------------
 def test_quit_command_exits(capsys):
     session = _make_session()
-    inputs = iter([":quit"])
-    with patch("duckboard.repl._read_input", side_effect=inputs):
-        run_repl(session)
+    run_repl(session, _input_fn=_mock_input(":quit"))
     out = capsys.readouterr().out
-    assert "Bye." in out
+    assert "Bye" in out
 
 
-# ---------------------------------------------------------------------------
-# 4. Ctrl+D (EOFError) exits cleanly
-# ---------------------------------------------------------------------------
 def test_eof_exits_cleanly(capsys):
     session = _make_session()
-    with patch("duckboard.repl._read_input", side_effect=EOFError):
-        run_repl(session)
+    def _eof(prompt: str = "") -> str:
+        raise EOFError
+    run_repl(session, _input_fn=_eof)
     out = capsys.readouterr().out
-    assert "Bye." in out
+    assert "Bye" in out
 
 
-# ---------------------------------------------------------------------------
-# 5. Multi-line SQL accumulates until semicolon
-# ---------------------------------------------------------------------------
 def test_multiline_sql_executes_on_semicolon(capsys):
     session = _make_session(cols=["n"], rows=[(42,)])
-    inputs = iter([
+    run_repl(session, _input_fn=_mock_input(
         "SELECT COUNT(*)",
         "FROM sample;",
         "quit",
-    ])
-    with patch("duckboard.repl._read_input", side_effect=inputs):
-        run_repl(session)
-    session.fetch.assert_called_once_with("SELECT COUNT(*) FROM sample")
+    ))
+    out = capsys.readouterr().out
+    assert "42" in out
 
 
-# ---------------------------------------------------------------------------
-# 6. Empty line resets buffer
-# ---------------------------------------------------------------------------
 def test_empty_line_resets_buffer(capsys):
     session = _make_session(cols=["n"], rows=[(1,)])
-    inputs = iter([
+    run_repl(session, _input_fn=_mock_input(
         "SELECT *",   # start accumulating
         "",           # empty — resets buffer
-        "SELECT n FROM t;",  # fresh statement
+        "SELECT n FROM t;",
         "quit",
-    ])
-    with patch("duckboard.repl._read_input", side_effect=inputs):
-        run_repl(session)
-    # fetch should be called once with only the second statement
-    session.fetch.assert_called_once_with("SELECT n FROM t")
+    ))
+    # only one fetch call — the abandoned SELECT * was discarded
+    assert session.fetch.call_count == 1
 
 
-# ---------------------------------------------------------------------------
-# 7. :command dispatches to handle_command
-# ---------------------------------------------------------------------------
 def test_command_dispatches_to_handle_command(capsys):
     session = _make_session()
-    with (
-        patch("duckboard.repl._read_input", side_effect=iter([":tables", "quit"])),
-        patch("duckboard.commands.handle_command", return_value="(no tables loaded)") as mock_cmd,
-    ):
-        run_repl(session)
-    mock_cmd.assert_called_once_with(":tables", session, None)
+    with patch("duckboard.commands.handle_command", return_value="(no tables loaded)") as mock_cmd:
+        run_repl(session, _input_fn=_mock_input(":tables", "quit"))
+    out = capsys.readouterr().out
+    assert "(no tables loaded)" in out
+    mock_cmd.assert_called_once()

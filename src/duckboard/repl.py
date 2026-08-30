@@ -33,25 +33,36 @@ def _is_exit(line: str) -> bool:
     return line.lower() in EXIT_TRIGGERS
 
 
-def run_repl(session: DuckboardSession) -> None:
+def run_repl(session: DuckboardSession, _input_fn=None) -> None:
     from duckboard.commands import handle_command
 
-    try:
-        if sys.platform == "win32":
-            import pyreadline3 as _rl  # type: ignore[import]
-        else:
-            import readline as _rl  # type: ignore[import]
-        from duckboard.completer import DuckboardCompleter
+    _test_mode = _input_fn is not None
+    if _input_fn is None:
+        _input_fn = _read_input
 
-        _completer = DuckboardCompleter(session)
-        _rl.set_completer(_completer.complete)
-        _rl.set_completer_delims(" \t")
-        if getattr(_rl, "__doc__", None) and "libedit" in _rl.__doc__:
-            _rl.parse_and_bind("bind ^I rl_complete")  # macOS libedit
-        else:
-            _rl.parse_and_bind("tab: complete")
-    except (ImportError, AttributeError):
-        pass  # readline / pyreadline3 not installed — silent
+    if not _test_mode:
+        try:
+            from duckboard.completer import DuckboardCompleter
+
+            if sys.platform == "win32":
+                from pyreadline3 import Readline as _Readline  # type: ignore[import]
+                _rl = _Readline()
+                _completer = DuckboardCompleter(session, get_line_buffer=_rl.get_line_buffer)
+                _rl.set_completer(_completer.complete)
+                _rl.set_completer_delims(" \t")
+                _rl.parse_and_bind("tab: complete")
+                _input_fn = _rl.readline
+            else:
+                import readline as _rl  # type: ignore[import]
+                _completer = DuckboardCompleter(session, get_line_buffer=_rl.get_line_buffer)
+                _rl.set_completer(_completer.complete)
+                _rl.set_completer_delims(" \t")
+                if getattr(_rl, "__doc__", None) and "libedit" in _rl.__doc__:
+                    _rl.parse_and_bind("bind ^I rl_complete")  # macOS libedit
+                else:
+                    _rl.parse_and_bind("tab: complete")
+        except (ImportError, AttributeError):
+            pass  # readline / pyreadline3 not installed or API unavailable — silent
 
     buffer: list[str] = []
     last_result: tuple[list[str], list[tuple]] | None = None
@@ -59,7 +70,7 @@ def run_repl(session: DuckboardSession) -> None:
     while True:
         prompt = PROMPT_MAIN if not buffer else PROMPT_CONT
         try:
-            raw = _read_input(prompt)
+            raw = _input_fn(prompt)
         except EOFError:
             print("\nBye.")
             break
