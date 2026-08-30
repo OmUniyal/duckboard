@@ -4,7 +4,7 @@ File-first local SQL workspace for CSV, Parquet, PSV, and JSON — powered by [D
 
 Load files once, query by name with plain SQL, export results. Terminal-native alternative to spinning up a notebook for quick file questions.
 
-> **Status:** v0.3.0 — available on [PyPI](https://pypi.org/project/duckboard/).
+> **Status:** v0.3.1 — available on [PyPI](https://pypi.org/project/duckboard/).
 
 ## Install
 
@@ -96,10 +96,14 @@ This shows up to 5 rows vertically. The full result set is still held in memory 
 
 duckboard supports tab completion (requires `pyreadline3` on Windows, built-in `readline` on Linux/macOS):
 
-- **Command names** — type `:s` and press Tab to expand to `:schema`, `:save`, etc.
-- **Table names** — after `:schema`, `:unload`, `:export_errors`, and similar commands
-- **File paths** — after `:load`
+- **Command names** — type `:sch` and press Tab to expand to `:schema`
+- **Table names** — after `:schema`, `:unload`, `:export_errors`, and similar commands;
+  also after `FROM`, `JOIN`, and related SQL keywords during query entry
+- **File paths** — after `:load`; filtered to supported file extensions only
 - **SQL keywords** — `SEL` → `SELECT`, `FR` → `FROM`, etc.
+
+Tab completes to the longest common prefix when multiple matches exist. Type
+enough characters to reach a unique match for a full completion.
 
 Install the readline extra on Windows:
 ```powershell
@@ -160,7 +164,8 @@ The `:tables` command shows status for every loaded table:
 
 - Queries display a maximum of 50 rows in the terminal. Full results are always exported via `:save`.
 - Large exports (2,000+ rows) prompt for confirmation before writing.
-- On Windows, use forward slashes in paths: `:load data/sales.csv` not `:load data\sales.csv`.
+- On Windows, forward slashes are recommended in paths: `:load data/sales.csv`.
+  Backslashes work but tab completion requires forward slashes to navigate directories.
 - Multi-line SQL is supported — statements execute on semicolon.
 - Validation runs on CSV and PSV files only. Parquet and JSON validation is planned for v0.4.0.
 - `python -m duckboard` works as an alternative launch method if the script entry point is unavailable.

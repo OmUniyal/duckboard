@@ -3,6 +3,31 @@
 All notable changes to duckboard are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.1] — 2026-08-30
+
+### Fixed
+- Tab autocomplete now works on Windows via `pyreadline3` — previous release
+  silently fell back to no-op due to `pyreadline3` not exposing `set_completer`
+  at module level; fix instantiates `Readline()` directly and wires it into
+  the REPL input loop without mutating `builtins.input` globally
+- Path completions filtered to supported file extensions only (`.csv`, `.tsv`,
+  `.psv`, `.parquet`, `.json`, `.jsonl`, `.ndjson`) — previously all files in
+  a directory were listed, flooding the console
+- Common-prefix completion prevents console flooding when multiple matches exist:
+  Tab advances to the longest shared prefix rather than dumping all matches
+- SQL table name completion added after `FROM`, `JOIN`, and related keywords —
+  loaded table names are now offered inline during query entry
+- `_read_input` patching in tests no longer blocked by readline setup; completer
+  initialisation is skipped entirely when `_input_fn` is injected (test mode)
+
+### Known limitations
+- Tab cycling through multiple matches (pressing Tab repeatedly to step through
+  options) is not supported under `pyreadline3`; type enough characters to reach
+  a unique prefix and Tab will complete it. Full cycling support planned when
+  `prompt_toolkit` is evaluated as a readline replacement.
+- Console prompt may not redraw automatically after the terminal scrolls; press
+  Enter to refresh. This is a `pyreadline3` rendering limitation.
+
 ## [0.3.0] — 2026-08-28
 
 ### Added
