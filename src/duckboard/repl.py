@@ -8,6 +8,7 @@ import sys
 from duckboard.exceptions import DuckboardError
 from duckboard.formatter import format_table
 from duckboard.session import DuckboardSession
+from duckboard.exceptions import DuckboardError, TerminalTooNarrowError
 
 EXIT_TRIGGERS = frozenset({":quit", ":q", "exit", "quit"})
 
@@ -131,7 +132,19 @@ def run_repl(session: DuckboardSession, _input_fn=None) -> None:
         try:
             cols, rows = session.fetch(sql)
             last_result = (cols, rows)
-            print(format_table(cols, rows, max_rows=vert_max_rows, vertical=vertical))
+            try:
+                print(format_table(cols, rows, max_rows=vert_max_rows, vertical=vertical))
+            except TerminalTooNarrowError:
+                ans = _input_fn(
+                    "Terminal too narrow for horizontal display. "
+                    "Show in vertical mode? [Y/n]: "
+                ).strip().lower()
+                if ans in ("", "y", "yes"):
+                    rows_ans = _input_fn(
+                        f"Max rows to show [{vert_max_rows}]: "
+                    ).strip()
+                    chosen = int(rows_ans) if rows_ans.isdigit() else vert_max_rows
+                    print(format_table(cols, rows, max_rows=chosen, vertical=True))
         except KeyboardInterrupt:
             print("\nInterrupted.")
         except DuckboardError as e:

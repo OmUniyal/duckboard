@@ -55,12 +55,12 @@ def test_minimum_column_width_is_four():
 
 
 def test_narrow_terminal_falls_back_to_vertical():
+    from duckboard.exceptions import TerminalTooNarrowError
     cols = ["col1", "col2", "col3"]
     rows = [("a", "b", "c")]
-    # budget < 4*3=12 → fallback
-    out = format_table(cols, rows, terminal_width=10)
-    assert "terminal too narrow" in out
-    assert "1. row" in out
+    # budget < 4*3=12 → raises
+    with pytest.raises(TerminalTooNarrowError):
+        format_table(cols, rows, terminal_width=10)
 
 
 # ── Vertical mode ─────────────────────────────────────────────────────────────

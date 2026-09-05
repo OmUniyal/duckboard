@@ -13,7 +13,11 @@ def format_table(
     terminal_width: int | None = None,
 ) -> str:
     def _cell(val: object) -> str:
-        return "NULL" if val is None else str(val)
+        if val is None:
+            return "NULL"
+        if isinstance(val, float) and val.is_integer():
+            return f"{val:.0f}"
+        return str(val)
 
     def _is_numeric_col(col_idx: int) -> bool:
         for row in rows:
@@ -71,10 +75,9 @@ def format_table(
     if total_needed > tw:
         budget = tw - (3 * n_cols + 1)
         if budget < 4 * n_cols:
-            # Terminal too narrow for even minimal columns — fall back to vertical
-            warn = "(terminal too narrow — switching to vertical mode)"
-            return warn + "\n" + format_table(
-                columns, rows, max_rows=max_rows, vertical=True, terminal_width=terminal_width
+            from duckboard.exceptions import TerminalTooNarrowError
+            raise TerminalTooNarrowError(
+                "terminal too narrow to display table horizontally"
             )
         # Greedy proportional assignment, floor 4 per column
         order = sorted(range(n_cols), key=lambda i: natural_widths[i], reverse=True)
