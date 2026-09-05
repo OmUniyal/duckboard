@@ -22,8 +22,14 @@ class DuckboardSession:
         path: str | Path,
         no_header: bool = False,
         column_names: list[str] | None = None,
+        delimiter: str | None = None,
+        quotechar: str | None = None,
     ) -> CatalogEntry:
-        return self.catalog.load(name, path, no_header=no_header, column_names=column_names)
+        return self.catalog.load(
+            name, path,
+            no_header=no_header, column_names=column_names,
+            delimiter=delimiter, quotechar=quotechar,
+        )
 
     def execute(self, sql: str) -> duckdb.DuckDBPyRelation:
         """Run SQL and return the DuckDB relation."""

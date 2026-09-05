@@ -47,7 +47,7 @@ def test_load_defaults_name_to_stem(tmp_path):
     entry = _mock_entry(name="sales", fmt="csv", path=str(csv))
     session = _make_session(load_return=entry)
     result = handle_command(f":load {csv}", session)
-    session.load.assert_called_once_with("sales", str(csv).replace("\\", "/"), no_header=False, column_names=None)
+    session.load.assert_called_once_with("sales", str(csv).replace("\\", "/"), no_header=False, column_names=None, delimiter=None, quotechar=None)
     assert "sales" in result
 
 
@@ -57,7 +57,7 @@ def test_load_uses_as_name(tmp_path):
     entry = _mock_entry(name="revenue", fmt="csv", path=str(csv))
     session = _make_session(load_return=entry)
     result = handle_command(f':load "{csv}" as revenue', session)
-    session.load.assert_called_once_with("revenue", str(csv).replace("\\", "/"), no_header=False, column_names=None)
+    session.load.assert_called_once_with("revenue", str(csv).replace("\\", "/"), no_header=False, column_names=None, delimiter=None, quotechar=None)
     assert "revenue" in result
 
 

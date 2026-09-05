@@ -17,13 +17,21 @@ import csv as _csv
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-_LOAD_RE = re.compile(
-    r'^:load\s+'
-    r'(?:"(?P<quoted>[^"]+)"|(?P<unquoted>\S+))'
-    r'(?:\s+as\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*))?'
-    r'\s*$',
-    re.IGNORECASE,
-)
+_DELIMITER_ALIASES: dict[str, str] = {
+    "tab": "\t",
+    "pipe": "|",
+    "semicolon": ";",
+    "caret": "^",
+    "comma": ",",
+}
+
+
+_QUOTECHAR_RE = re.compile(r'--quotechar\s+(\S+)')
+
+
+def _resolve_delimiter(value: str) -> str:
+    """Expand alias or return value as-is (single or multi-char)."""
+    return _DELIMITER_ALIASES.get(value.lower(), value)
 
 _SAVE_FORMATS = {"--csv": "csv", "--parquet": "parquet", "--json": "json"}
 _LARGE_ROW_WARNING = 2_000
@@ -34,14 +42,89 @@ def _normalize_path(path_str: str) -> str:
     return path_str.replace("\\", "/")
 
 
-def _parse_load(command: str) -> tuple[str, str] | None:
-    """Return (path_str, name) or None if parse fails."""
-    m = _LOAD_RE.match(command.strip())
-    if not m:
-        return None
-    path_str = _normalize_path(m.group("quoted") or m.group("unquoted"))
-    name = m.group("name") or Path(path_str).stem
-    return path_str, name
+def _parse_load(
+    command: str,
+) -> tuple[str, str, bool, str | None, str | None]:
+    """Return (path_str, name, no_header, delimiter, quotechar).
+
+    Raises ValueError with a user-facing message on any parse failure.
+    """
+    rest = command[len(":load"):].strip().replace("\\", "/")
+
+    # Pre-extract --quotechar before shlex sees it — bare quote chars confuse shlex
+    quotechar_pre: str | None = None
+    qm = _QUOTECHAR_RE.search(rest)
+    if qm:
+        raw_val = qm.group(1)
+        # Strip outer matching quotes if present (e.g. "'" → ')
+        if len(raw_val) >= 2 and raw_val[0] == '"' and raw_val[-1] == '"':
+            quotechar_pre = raw_val[1:-1]
+        elif len(raw_val) >= 2 and raw_val[0] == "'" and raw_val[-1] == "'":
+            quotechar_pre = raw_val[1:-1]
+        else:
+            quotechar_pre = raw_val
+        rest = rest[: qm.start()] + rest[qm.end() :]
+
+    try:
+        tokens = shlex.split(rest)
+    except ValueError as exc:
+        raise ValueError(f"Could not parse :load command: {exc}") from exc
+
+    if not tokens:
+        raise ValueError(
+            'Usage: :load "path/to/file.ext" [as name] '
+            "[--no-header] [--delimiter <value>] [--quotechar <char>]"
+        )
+
+    path_str = _normalize_path(tokens[0])
+    tokens = tokens[1:]
+
+    name: str | None = None
+    if len(tokens) >= 2 and tokens[0].lower() == "as":
+        name = tokens[1]
+        tokens = tokens[2:]
+    if name is None:
+        name = Path(path_str).stem
+
+    no_header = False
+    delimiter: str | None = None
+    quotechar: str | None = None
+
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "--no-header":
+            no_header = True
+            i += 1
+        elif tok == "--delimiter":
+            if i + 1 >= len(tokens):
+                raise ValueError("--delimiter requires a value.")
+            delimiter = _resolve_delimiter(tokens[i + 1])
+            i += 2
+        elif tok == "--quotechar":
+            # Should have been pre-extracted; if it appears here the value
+            # was quoted by the user (e.g. --quotechar "|") — handle it.
+            if i + 1 >= len(tokens):
+                raise ValueError("--quotechar requires a value.")
+            qc = tokens[i + 1]
+            if len(qc) != 1:
+                raise ValueError(
+                    f"--quotechar must be a single character, got {qc!r}."
+                )
+            quotechar = qc
+            i += 2
+        else:
+            raise ValueError(f"Unknown flag: {tok!r}.")
+
+    if quotechar_pre is not None:
+        if len(quotechar_pre) != 1:
+            raise ValueError(
+                f"--quotechar must be a single character, got {quotechar_pre!r}."
+            )
+        if quotechar is None:  # don't override if token loop also found one
+            quotechar = quotechar_pre
+
+    return path_str, name, no_header, delimiter, quotechar
 
 
 def _parse_save(command: str) -> tuple[str, str | None] | None:
@@ -70,19 +153,18 @@ def _format_of(path_str: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 def _cmd_load(command: str, session: DuckboardSession, input_fn=input) -> str:
-    no_header = "--no-header" in command
-    clean_command = command.replace("--no-header", "").strip()
-
-    parsed = _parse_load(clean_command)
-    if parsed is None:
-        return 'Usage: :load "path/to/file.ext" [as name] [--no-header]'
-    path_str, name = parsed
+    try:
+        path_str, name, no_header, delimiter, quotechar = _parse_load(command)
+    except ValueError as exc:
+        return str(exc)
 
     column_names = None
     if no_header:
         ext = Path(path_str).suffix.lower()
-        sep = "|" if ext == ".psv" else ","
-        col_count = _peek_column_count(path_str, sep)
+        peek_sep = delimiter if delimiter is not None else ("|" if ext == ".psv" else ",")
+        if len(peek_sep) > 1:
+            peek_sep = ","  # multi-char: fall back for peeking only
+        col_count = _peek_column_count(path_str, peek_sep)
         if col_count == 0:
             return f"Error: could not read columns from '{path_str}'."
         auto_names = [f"col{i + 1}" for i in range(col_count)]
@@ -101,7 +183,11 @@ def _cmd_load(command: str, session: DuckboardSession, input_fn=input) -> str:
             column_names = auto_names
 
     try:
-        entry = session.load(name, path_str, no_header=no_header, column_names=column_names)
+        entry = session.load(
+            name, path_str,
+            no_header=no_header, column_names=column_names,
+            delimiter=delimiter, quotechar=quotechar,
+        )
     except CatalogError as e:
         return f"Error: {e}"
 
@@ -162,8 +248,18 @@ def _cmd_schema(command: str, session: DuckboardSession) -> str:
         return "Usage: :schema <table>"
     name = parts[1]
     try:
+        entry = session.catalog.get(name)
         columns, rows = session.schema(name)
         result = format_table(columns, rows)
+        if entry.format in ("csv", "psv"):
+            delim_display = (
+                repr(entry.delimiter) if entry.delimiter is not None else "(default)"
+            )
+            quote_display = (
+                repr(entry.quotechar) if entry.quotechar is not None else '(default: ")'
+            )
+            result += f"\n\nDelimiter : {delim_display}"
+            result += f"\nQuote char: {quote_display}"
         warnings = session.get_warnings(name)
         if warnings:
             result += "\n\nWarnings:\n" + "\n".join(f"  {w}" for w in warnings)

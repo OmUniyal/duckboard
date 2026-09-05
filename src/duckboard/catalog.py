@@ -26,6 +26,8 @@ class CatalogEntry:
     path: Path
     format: str  # "csv", "psv", "parquet", or "json"
     error_count: int = 0  # structural + type-anomaly errors from validation
+    delimiter: str | None = None  # None = format default
+    quotechar: str | None = None  # None = format default (")
 
 
 def _validate_name(name: str) -> None:
@@ -57,23 +59,31 @@ def _read_function(
     path: Path,
     no_header: bool = False,
     column_names: list[str] | None = None,
+    delimiter: str | None = None,
+    quotechar: str | None = None,
 ) -> str:
     """Return DuckDB read_* SQL for a file path."""
     path_literal = str(path.resolve()).replace("\\", "/").replace("'", "''")
     extras = _header_clause(no_header, column_names)
-    if fmt == "csv":
-        return f"read_csv_auto('{path_literal}', ignore_errors=true{extras})"
-    if fmt == "psv":
-        return f"read_csv_auto('{path_literal}', sep='|', ignore_errors=true{extras})"
+    if fmt in ("csv", "psv"):
+        extra_parts: list[str] = []
+        # Delimiter: use explicit value, else PSV default, else let DuckDB auto-detect
+        if delimiter is not None:
+            extra_parts.append(f"sep='{delimiter.replace(chr(39), chr(39)*2)}'")
+        elif fmt == "psv":
+            extra_parts.append("sep='|'")
+        if quotechar is not None:
+            extra_parts.append(f"quote='{quotechar.replace(chr(39), chr(39)*2)}'")
+        sep_str = (", " + ", ".join(extra_parts)) if extra_parts else ""
+        return f"read_csv_auto('{path_literal}', ignore_errors=true{sep_str}{extras})"
     if fmt == "parquet":
         return f"read_parquet('{path_literal}')"
     if fmt == "json":
+        # JSONL/NDJSON: tolerate malformed lines so Python scan can capture them
+        if path.suffix.lower() in (".jsonl", ".ndjson"):
+            return f"read_json_auto('{path_literal}', ignore_errors=true)"
         return f"read_json_auto('{path_literal}')"
     raise CatalogError(f"Unknown format: {fmt}")
-
-
-def _csv_sep(fmt: str) -> str:
-    return "|" if fmt == "psv" else ","
 
 
 def _header_clause(no_header: bool, column_names: list[str] | None) -> str:
@@ -100,6 +110,8 @@ class FileCatalog:
         path: str | Path,
         no_header: bool = False,
         column_names: list[str] | None = None,
+        delimiter: str | None = None,
+        quotechar: str | None = None,
     ) -> CatalogEntry:
         _validate_name(name)
 
@@ -108,9 +120,40 @@ class FileCatalog:
             raise CatalogError(f"File not found: {resolved}")
 
         fmt = _detect_format(resolved)
-        read_fn = _read_function(fmt, resolved, no_header=no_header, column_names=column_names)
 
-        self._conn.execute(f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {read_fn}")
+        if delimiter is not None and fmt not in ("csv", "psv"):
+            raise CatalogError(
+                f"--delimiter is not applicable to {fmt.upper()} files."
+            )
+        if quotechar is not None and fmt not in ("csv", "psv"):
+            raise CatalogError(
+                f"--quotechar is not applicable to {fmt.upper()} files."
+            )
+
+        # Auto-infer tab delimiter for .tsv files
+        if delimiter is None and resolved.suffix.lower() == ".tsv":
+            delimiter = "\t"
+
+        read_fn = _read_function(
+            fmt, resolved,
+            no_header=no_header, column_names=column_names,
+            delimiter=delimiter, quotechar=quotechar,
+        )
+
+        try:
+            self._conn.execute(f"CREATE OR REPLACE VIEW {name} AS SELECT * FROM {read_fn}")
+        except Exception as exc:
+            if fmt == "json":
+                raise CatalogError(
+                    f"Could not load '{resolved.name}' as tabular JSON. "
+                    "Expected a JSON array of objects or newline-delimited JSON records. "
+                    f"DuckDB: {exc}"
+                ) from exc
+            raise CatalogError(str(exc)) from exc
+
+        # Post-load non-tabular JSON guard (DuckDB doesn't raise on scalars/objects)
+        if fmt == "json" and resolved.suffix.lower() == ".json":
+            self._check_json_tabular(name, resolved)
 
         self._warnings[name] = []
         error_count = 0
@@ -121,10 +164,23 @@ class FileCatalog:
                     f"Warning: first row of '{name}' may be data, not headers. "
                     "Use ':load ... --no-header' if needed."
                 )
-            error_count += self._run_structural_validation(name, resolved, fmt)
+            error_count += self._run_structural_validation(
+                name, resolved, fmt, delimiter=delimiter, quotechar=quotechar
+            )
             error_count += self._run_type_anomaly_detection(name)
 
-        entry = CatalogEntry(name=name, path=resolved, format=fmt, error_count=error_count)
+        if fmt == "json" and resolved.suffix.lower() in (".jsonl", ".ndjson"):
+            error_count += self._run_jsonl_validation(name, resolved)
+
+        if fmt == "json":
+            self._run_json_schema_check(name)
+
+        self._run_all_null_check(name)
+
+        entry = CatalogEntry(
+            name=name, path=resolved, format=fmt, error_count=error_count,
+            delimiter=delimiter, quotechar=quotechar,
+        )
         self._entries[name] = entry
         self._run_row_count_crosscheck(name, resolved, fmt, error_count)
         return entry
@@ -172,15 +228,31 @@ class FileCatalog:
             )
         """)
 
-    def _run_structural_validation(self, name: str, path: Path, fmt: str) -> int:
+    def _run_structural_validation(
+        self,
+        name: str,
+        path: Path,
+        fmt: str,
+        delimiter: str | None = None,
+        quotechar: str | None = None,
+    ) -> int:
         import csv as _csv
 
-        sep = _csv_sep(fmt)
+        sep = delimiter if delimiter is not None else ("|" if fmt == "psv" else ",")
+
+        # Python csv.reader only supports single-char delimiters.
+        # Multi-char delimiters fall back to DuckDB + residual cross-check only.
+        if len(sep) > 1:
+            return 0
+
         errors: list[tuple[int, str, str]] = []
+        reader_kwargs: dict = {"delimiter": sep}
+        if quotechar is not None:
+            reader_kwargs["quotechar"] = quotechar
 
         try:
             with path.open(newline="", encoding="utf-8", errors="replace") as fh:
-                reader = _csv.reader(fh, delimiter=sep)
+                reader = _csv.reader(fh, **reader_kwargs)
                 try:
                     header = next(reader)
                 except StopIteration:
@@ -314,6 +386,108 @@ class FileCatalog:
                 f"known errors: {error_count}."
             )
 
+    def _run_all_null_check(self, name: str) -> None:
+        """Warn for any column where every value is NULL."""
+        try:
+            col_info = self._conn.execute(f"DESCRIBE {name}").fetchall()
+        except Exception:
+            return
+        for row in col_info:
+            col = row[0]
+            try:
+                count = self._conn.execute(
+                    f'SELECT COUNT(*) FROM {name} WHERE "{col}" IS NOT NULL'
+                ).fetchone()[0]
+            except Exception:
+                continue
+            if count == 0:
+                self._warnings[name].append(
+                    f"Warning: column '{col}' has no non-null values (all NULL)."
+                )
+
+    def _run_jsonl_validation(self, name: str, path: Path) -> int:
+        """Scan every line of a JSONL/NDJSON file with json.loads().
+
+        Captures malformed lines in _errors_{name} as error_type='json_parse'.
+        Prints a progress note to stdout for files larger than 50 MB.
+        """
+        import json as _json
+
+        _LARGE_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+        try:
+            file_size = path.stat().st_size
+        except Exception:
+            file_size = 0
+
+        if file_size > _LARGE_FILE_BYTES:
+            size_mb = file_size / (1024 * 1024)
+            print(f"  Scanning {size_mb:.1f} MB JSONL file for malformed lines...")
+
+        errors: list[tuple[int, str, str]] = []
+
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for i, line in enumerate(fh, start=1):
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        _json.loads(stripped)
+                    except _json.JSONDecodeError as exc:
+                        errors.append((i, stripped[:200], str(exc)))
+        except Exception:
+            return 0
+
+        if not errors:
+            return 0
+
+        self._ensure_errors_table(name)
+        for row_number, raw_line, reason in errors:
+            self._conn.execute(
+                f"INSERT INTO _errors_{name} VALUES (?, ?, 'json_parse', NULL, ?)",
+                [row_number, raw_line, reason],
+            )
+        return len(errors)
+
+    def _run_json_schema_check(self, name: str) -> None:
+        """Warn for any column DuckDB inferred as JSON type (mixed structure)."""
+        try:
+            col_info = self._conn.execute(f"DESCRIBE {name}").fetchall()
+        except Exception:
+            return
+        for row in col_info:
+            col_name, col_type = row[0], row[1]
+            if col_type.upper() == "JSON":
+                self._warnings[name].append(
+                    f"Warning: column '{col_name}' was inferred as JSON type — "
+                    "values have inconsistent structure across records."
+                )
+
+    def _check_json_tabular(self, name: str, path: Path) -> None:
+        """Raise CatalogError if a .json file did not load as a proper table."""
+        try:
+            cols = self._conn.execute(f"DESCRIBE {name}").fetchall()
+        except Exception:
+            return
+
+        if not cols:
+            self._conn.execute(f"DROP VIEW IF EXISTS {name}")
+            raise CatalogError(
+                f"Could not load '{path.name}' as tabular JSON. "
+                "Expected a JSON array of objects."
+            )
+
+        # DuckDB names the column 'json' when loading a scalar or array of
+        # scalars — these are not valid tabular data.
+        col_names = [r[0].lower() for r in cols]
+        if col_names == ["json"]:
+            self._conn.execute(f"DROP VIEW IF EXISTS {name}")
+            raise CatalogError(
+                f"Could not load '{path.name}' as tabular JSON. "
+                "Expected a JSON array of objects (got a scalar or array of scalars)."
+            )
+
     # ------------------------------------------------------------------
     # Public accessors
     # ------------------------------------------------------------------
@@ -341,7 +515,10 @@ class FileCatalog:
             f'"{c}" AS "{new_col}"' if c == old_col else f'"{c}"'
             for c in cols
         )
-        read_fn = _read_function(entry.format, entry.path)
+        read_fn = _read_function(
+            entry.format, entry.path,
+            delimiter=entry.delimiter, quotechar=entry.quotechar,
+        )
         self._conn.execute(
             f"CREATE OR REPLACE VIEW {name} AS SELECT {select_list} FROM {read_fn}"
         )
