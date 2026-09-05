@@ -3,6 +3,49 @@
 All notable changes to duckboard are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.4.0] — 2026-09-05
+
+### Added
+- `--delimiter <value>` flag on `:load` — accepts named aliases (`tab`, `pipe`,
+  `semicolon`, `caret`, `comma`), any single character, or multi-char strings;
+  `.tsv` files automatically default to tab delimiter without requiring the flag
+- `--quotechar <char>` flag on `:load` — override the default `"` quote character;
+  single character only
+- `:schema` now shows delimiter and quote char for CSV/PSV tables — `(default)`
+  when unset, explicit value when overridden
+- All-null column check on every load (CSV, PSV, Parquet, JSON) — warns when a
+  column has no non-null values; surfaced in `:schema` Warnings section
+- JSONL/NDJSON line-level validation — full-file scan with `json.loads()`, no row
+  cap; malformed lines captured in `_errors_{name}` with `error_type = json_parse`;
+  progress indicator printed for files larger than 50 MB
+- JSON schema consistency warning — when DuckDB infers a column as `JSON` type
+  (mixed structure across records), a warning is added to `:schema`
+- Non-tabular JSON guard for `.json` files — scalars and arrays of scalars raise
+  `CatalogError` with a clear message instead of loading as a single-column table
+
+### Fixed
+- Vertical output no longer triggered automatically for wide tables — the terminal-
+  too-narrow fallback previously switched silently to vertical mode and buried a
+  warning under 50 rows of output; now raises `TerminalTooNarrowError` and prompts
+  the user interactively (confirm vertical mode + choose row count)
+- Large integer/float columns no longer displayed in scientific notation — whole-
+  number floats (e.g. ID-style columns typed as `DOUBLE` by DuckDB) now render
+  as integers (`412345678` instead of `4.12e+08`)
+
+### Changed
+- `--delimiter` and `--quotechar` are forwarded to both DuckDB `read_csv_auto`
+  and the Python `csv` module structural scanner, ensuring consistent validation
+  and query behaviour for non-default delimiters
+- Multi-char delimiters bypass the Python structural scan (Python `csv.reader`
+  does not support them) and rely on DuckDB + residual row-count cross-check only
+- `CatalogEntry` now stores `delimiter` and `quotechar` fields; `rename_column`
+  preserves them when reconstructing the view
+
+### Tests
+- 151 passing (up from 105 in v0.3.1)
+- New: `test_catalog_v4.py` (12), `test_commands_v3.py` (21),
+  `test_json_validation.py` (13), `test_formatter_v3.py` updated (1 change)
+
 ## [0.3.1] — 2026-08-30
 
 ### Fixed

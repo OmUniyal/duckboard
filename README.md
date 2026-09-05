@@ -4,7 +4,7 @@ File-first local SQL workspace for CSV, Parquet, PSV, and JSON — powered by [D
 
 Load files once, query by name with plain SQL, export results. Terminal-native alternative to spinning up a notebook for quick file questions.
 
-> **Status:** v0.3.1 — available on [PyPI](https://pypi.org/project/duckboard/).
+> **Status:** v0.4.0 — available on [PyPI](https://pypi.org/project/duckboard/).
 
 ## Install
 
@@ -58,7 +58,7 @@ Bye.
 
 | Command | Description |
 |---------|-------------|
-| `:load "path" [as name] [--no-header]` | Load a file as a queryable table. Name defaults to filename stem. Use `--no-header` if the file has no header row — duckboard will prompt for column names or auto-generate them. |
+| `:load "path" [as name] [--no-header] [--delimiter <value>] [--quotechar <char>]` | Load a file as a queryable table. Name defaults to filename stem. Use `--no-header` for files without a header row. Use `--delimiter` to set the field separator (aliases: `tab`, `pipe`, `semicolon`, `caret`, `comma`, or any single character). Use `--quotechar` to set the quote character (default `"`). `.tsv` files auto-detect tab delimiter. |
 | `:tables` | List all loaded tables with format, path, and validation status. |
 | `:schema <table>` | Show column names, types, and nullability. Includes load warnings when present. |
 | `:save "path" [--csv\|--parquet\|--json]` | Save last query result to a file. Format auto-detected from extension; use flag to override. |
@@ -160,6 +160,14 @@ The `:tables` command shows status for every loaded table:
 `[!?]` — rows dropped by DuckDB, not in error table, cause TBD.
 `[!N +?]` — both.
 
+**Delimiter and quote char support** (CSV/PSV/TSV): non-default delimiters are forwarded to both DuckDB and the structural validator, so validation is consistent with how the file actually parses:
+
+```
+duckboard> :load data.csv --delimiter semicolon
+duckboard> :load data.csv --delimiter | --quotechar '
+duckboard> :load data.tsv              ← tab delimiter inferred automatically
+```
+
 ## Notes
 
 - Queries display a maximum of 50 rows in the terminal. Full results are always exported via `:save`.
@@ -167,7 +175,7 @@ The `:tables` command shows status for every loaded table:
 - On Windows, forward slashes are recommended in paths: `:load data/sales.csv`.
   Backslashes work but tab completion requires forward slashes to navigate directories.
 - Multi-line SQL is supported — statements execute on semicolon.
-- Validation runs on CSV and PSV files only. Parquet and JSON validation is planned for v0.4.0.
+- Structural validation runs on CSV/PSV/TSV files (full-file scan, no row cap). JSONL/NDJSON files are line-scanned with `json.loads()`. All formats receive an all-null column check. Parquet validation is limited to the residual row-count cross-check and all-null detection.
 - `python -m duckboard` works as an alternative launch method if the script entry point is unavailable.
 
 ## Read more
